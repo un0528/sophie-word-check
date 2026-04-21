@@ -188,21 +188,11 @@ async function lookupCurrentWord() {
 }
 
 function resetProgress() {
-  if (!confirm("确认重置进度吗？这会清除本地缓存并恢复初始状态。")) {
+  if (!confirm("确认重置进度吗？这会删除本地 localStorage 进度并刷新页面。")) {
     return;
   }
   localStorage.removeItem(STORAGE_KEY);
-  Object.keys(state.words).forEach((word) => {
-    state.words[word].status = STATUS.UNVERIFIED;
-    state.words[word].updatedAt = null;
-  });
-  state.history = [];
-  state.activeTab = STATUS.UNVERIFIED;
-  buildSectionsFromWords();
-  pickNextWord();
-  saveState();
-  render();
-  alert("已重置：本地缓存已清除并恢复到初始进度");
+  location.reload();
 }
 
 function parseMarkdownWordSections(content) {
