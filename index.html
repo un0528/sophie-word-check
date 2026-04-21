@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>KET 单词检验</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <main class="container">
+      <header class="header">
+        <div class="header-row">
+          <h1>KET 单词检验</h1>
+          <div class="header-actions">
+            <button id="export-btn" type="button">导出 md</button>
+            <label class="import-label" for="import-input">导入 md</label>
+            <input id="import-input" type="file" accept=".md,text/markdown,text/plain" />
+            <button id="reset-btn" type="button" class="danger">重置进度</button>
+          </div>
+        </div>
+        <p class="subtitle">从待处理词汇中进行判断，并自动归类到已完成或继续学习</p>
+      </header>
+
+      <section class="stats card">
+        <div><strong>总词数：</strong><span id="total-count">0</span></div>
+        <div><strong>待处理：</strong><span id="unverified-count">0</span></div>
+        <div><strong>已完成：</strong><span id="known-count">0</span></div>
+        <div><strong>继续学习：</strong><span id="unknown-count">0</span></div>
+        <div><strong>完成率：</strong><span id="progress-rate">0%</span></div>
+      </section>
+
+      <section class="quiz card">
+        <h2>当前检验单词</h2>
+        <div class="word-row">
+          <p id="current-word" class="word">加载中...</p>
+          <button id="lookup-btn" type="button" class="lookup-btn">查询当前词</button>
+        </div>
+        <div class="actions">
+          <button id="known-btn" type="button" class="success">已完成</button>
+          <button id="unknown-btn" type="button" class="warning">继续学习</button>
+          <button id="skip-btn" type="button">跳过</button>
+          <button id="undo-btn" type="button">撤销上一步</button>
+        </div>
+      </section>
+
+      <section class="lists card">
+        <div class="list-tabs">
+          <button class="tab active" data-tab="unverified" type="button">
+            待处理 <span id="tab-unverified-count" class="tab-count">0</span>
+          </button>
+          <button class="tab" data-tab="known" type="button">
+            已完成 <span id="tab-known-count" class="tab-count">0</span>
+          </button>
+          <button class="tab" data-tab="unknown" type="button">
+            继续学习 <span id="tab-unknown-count" class="tab-count">0</span>
+          </button>
+        </div>
+        <ul id="word-list"></ul>
+      </section>
+    </main>
+
+    <dialog id="lookup-dialog" class="lookup-dialog">
+      <form method="dialog" class="lookup-dialog-close-row">
+        <button type="submit" class="lookup-close">关闭</button>
+      </form>
+      <h3 id="lookup-title">词汇查询</h3>
+      <div id="lookup-body" class="lookup-body">暂无查询结果</div>
+      <div id="lookup-pron-controls" class="lookup-pron-controls" hidden>
+        <button id="play-uk-btn" type="button">播放英音</button>
+        <button id="play-us-btn" type="button">播放美音</button>
+      </div>
+      <audio id="lookup-audio" controls hidden></audio>
+    </dialog>
+
+    <script src="./ket-1975.js"></script>
+    <script src="./app.js"></script>
+  </body>
+</html>
