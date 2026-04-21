@@ -1,6 +1,5 @@
 const STORAGE_KEY = "ket1975.progress.v1";
 const SOURCE_PATH = "./ket-1975.md";
-const EMBEDDED_MARKDOWN = window.KET1975_MARKDOWN || "";
 const STATUS = {
   UNVERIFIED: "unverified",
   KNOWN: "known",
@@ -570,20 +569,11 @@ function bindEvents() {
 
 async function init() {
   try {
-    let markdown = "";
-    try {
-      const response = await fetch(SOURCE_PATH);
-      if (!response.ok) {
-        throw new Error(`读取词库失败: ${response.status}`);
-      }
-      markdown = await response.text();
-    } catch (_fetchError) {
-      markdown = EMBEDDED_MARKDOWN;
+    const response = await fetch(SOURCE_PATH);
+    if (!response.ok) {
+      throw new Error(`读取词库失败: ${response.status}`);
     }
-
-    if (!markdown) {
-      throw new Error("未找到可用词库数据");
-    }
+    const markdown = await response.text();
 
     const parsed = parseMarkdownWordSections(markdown);
     state.wordOrderIndex = buildWordOrderIndex(parsed);
@@ -601,7 +591,7 @@ async function init() {
     saveState();
     render();
   } catch (error) {
-    els.currentWord.textContent = "初始化失败：请确认 ket-1975.js 或 ket-1975.md 可访问";
+    els.currentWord.textContent = "初始化失败：请确认 ket-1975.md 可访问";
     console.error(error);
   }
 }
