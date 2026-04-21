@@ -570,14 +570,21 @@ function bindEvents() {
 
 async function init() {
   try {
-    let markdown = EMBEDDED_MARKDOWN;
-    if (!markdown) {
+    let markdown = "";
+    try {
       const response = await fetch(SOURCE_PATH);
       if (!response.ok) {
         throw new Error(`读取词库失败: ${response.status}`);
       }
       markdown = await response.text();
+    } catch (_fetchError) {
+      markdown = EMBEDDED_MARKDOWN;
     }
+
+    if (!markdown) {
+      throw new Error("未找到可用词库数据");
+    }
+
     const parsed = parseMarkdownWordSections(markdown);
     state.wordOrderIndex = buildWordOrderIndex(parsed);
     state.words = createInitialWords(parsed);
