@@ -66,6 +66,24 @@ async function fetchDictionaryData(word) {
   }
 }
 
+async function translateToChinese(text) {
+  const value = typeof text === "string" ? text.trim() : "";
+  if (!value) return "";
+  try {
+    const url = new URL("https://api.mymemory.translated.net/get");
+    url.searchParams.set("q", value);
+    url.searchParams.set("langpair", "en|zh-CN");
+    const response = await fetch(url.toString());
+    if (!response.ok) return "";
+    const data = await response.json();
+    const translated = data?.responseData?.translatedText;
+    if (typeof translated !== "string" || !translated.trim()) return "";
+    return translated.trim();
+  } catch (_error) {
+    return "";
+  }
+}
+
 function extractPronunciationInfo(dictionaryData) {
   const empty = {
     ukAudio: "",
@@ -121,6 +139,23 @@ function extractDefinitionFallback(dictionaryData) {
   return defs.slice(0, 3).join("; ");
 }
 
+function collectDictionaryDefinitions(dictionaryData) {
+  if (!dictionaryData?.meanings || !Array.isArray(dictionaryData.meanings)) return [];
+  const definitions = [];
+  dictionaryData.meanings.forEach((meaning) => {
+    const part = typeof meaning?.partOfSpeech === "string" ? meaning.partOfSpeech.trim() : "";
+    if (!Array.isArray(meaning?.definitions)) return;
+    meaning.definitions.slice(0, 2).forEach((item) => {
+      if (typeof item?.definition !== "string" || !item.definition.trim()) return;
+      definitions.push({
+        partOfSpeech: part,
+        definition: item.definition.trim(),
+      });
+    });
+  });
+  return definitions.slice(0, 4);
+}
+
 function playLookupAudio(audioUrl) {
   if (!audioUrl) return;
   els.lookupAudio.src = audioUrl;
@@ -138,7 +173,8 @@ async function lookupCurrentWord() {
   }
 
   els.lookupBtn.disabled = true;
-  els.lookupTitle.textContent = `词汇查询：${word}`;
+  els.lookupTitle.textContent = "";
+  els.lookupTitle.hidden = true;
   els.lookupBody.textContent = "查询中...";
   els.lookupAudio.hidden = true;
   els.lookupAudio.removeAttribute("src");
@@ -156,14 +192,28 @@ async function lookupCurrentWord() {
 
   const pronunciation = extractPronunciationInfo(dictionaryData);
   const definitionFallback = extractDefinitionFallback(dictionaryData);
-  const resolvedTranslation = definitionFallback || "当前网络下未启用在线翻译";
+  const dictionaryDefinitions = collectDictionaryDefinitions(dictionaryData);
+  const translationCandidates = dictionaryDefinitions.length
+    ? dictionaryDefinitions.map((item) => item.definition)
+    : definitionFallback
+    ? [definitionFallback]
+    : [];
+  const translatedLines = await Promise.all(
+    translationCandidates.map((text) => translateToChinese(text))
+  );
+  const chineseMeanings = translatedLines.filter(Boolean);
+  const resolvedTranslation =
+    chineseMeanings.length > 0
+      ? chineseMeanings.map((line, index) => `${index + 1}. ${line}`).join("\n")
+      : definitionFallback || "暂无中文释义（翻译服务暂不可用）";
   const ukLine = pronunciation.ukPhonetic || pronunciation.genericPhonetic || "暂无";
   const usLine = pronunciation.usPhonetic || pronunciation.genericPhonetic || "暂无";
+  const phoneticLine =
+    ukLine && usLine && ukLine !== usLine ? `${ukLine} / ${usLine}` : ukLine || usLine || "暂无";
   const parts = [
-    `单词：${word}`,
-    `翻译：${resolvedTranslation}`,
-    `英音音标：${ukLine}`,
-    `美音音标：${usLine}`,
+    word,
+    phoneticLine,
+    resolvedTranslation,
   ];
   els.lookupBody.textContent = parts.join("\n");
 
@@ -266,6 +316,27 @@ function buildWordOrderIndex(sections) {
   return index;
 }
 
+function bootstrapStateFromSections(sections, persisted = null) {
+  state.wordOrderIndex = buildWordOrderIndex(sections);
+  state.words = createInitialWords(sections);
+  if (persisted?.words) {
+    applyPersistedWords(state.words, persisted.words);
+    state.history = Array.isArray(persisted.history) ? persisted.history : [];
+  } else {
+    state.history = [];
+  }
+  buildSectionsFromWords();
+  const persistedCurrentWord = persisted?.currentWord;
+  if (
+    typeof persistedCurrentWord === "string" &&
+    state.words[persistedCurrentWord]?.status === STATUS.UNVERIFIED
+  ) {
+    state.currentWord = persistedCurrentWord;
+  } else {
+    pickNextWord();
+  }
+}
+
 function getPersistedState() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -285,6 +356,7 @@ function saveState() {
     updatedAt: new Date().toISOString(),
     words: state.words,
     history: state.history,
+    currentWord: state.currentWord,
   };
   localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
 }
@@ -334,12 +406,20 @@ function pickNextWord(afterWord = null) {
     return;
   }
   const currentIndex = list.indexOf(afterWord);
-  if (currentIndex === -1) {
-    state.currentWord = list[0];
+  if (currentIndex !== -1) {
+    const nextIndex = (currentIndex + 1) % list.length;
+    state.currentWord = list[nextIndex];
     return;
   }
-  const nextIndex = (currentIndex + 1) % list.length;
-  state.currentWord = list[nextIndex];
+
+  // afterWord may have just been moved out of the unverified list.
+  // In that case, continue by source order instead of jumping to the first word.
+  const afterOrder = state.wordOrderIndex[afterWord] ?? -1;
+  const nextByOrder = list.find((word) => {
+    const order = state.wordOrderIndex[word] ?? Number.MAX_SAFE_INTEGER;
+    return order > afterOrder;
+  });
+  state.currentWord = nextByOrder || list[0];
 }
 
 function setWordStatus(word, status) {
@@ -420,6 +500,13 @@ function renderList() {
   list.forEach((word) => {
     const li = document.createElement("li");
     li.textContent = word;
+    li.dataset.word = word;
+    if (state.activeTab === STATUS.UNVERIFIED) {
+      li.classList.add("clickable");
+    }
+    if (word === state.currentWord) {
+      li.classList.add("current");
+    }
     fragment.appendChild(li);
   });
   els.wordList.appendChild(fragment);
@@ -482,6 +569,15 @@ function importMarkdownProgress(markdownText) {
     return;
   }
 
+  // Allow import to bootstrap data when SOURCE_PATH cannot be fetched (e.g. file://).
+  if (Object.keys(state.words).length === 0) {
+    bootstrapStateFromSections(importedSections);
+    saveState();
+    render();
+    alert("导入成功：已加载词库并应用当前进度");
+    return;
+  }
+
   Object.keys(state.words).forEach((word) => {
     state.words[word].status = STATUS.UNVERIFIED;
     state.words[word].updatedAt = new Date().toISOString();
@@ -527,6 +623,7 @@ function bindEvents() {
 
   els.skipBtn.addEventListener("click", () => {
     pickNextWord(state.currentWord);
+    saveState();
     render();
   });
 
@@ -555,9 +652,22 @@ function bindEvents() {
       renderList();
     });
   });
+
+  els.wordList.addEventListener("click", (event) => {
+    const target = event.target.closest("li[data-word]");
+    if (!target) return;
+    if (state.activeTab !== STATUS.UNVERIFIED) return;
+    const word = target.dataset.word;
+    if (!word || !state.words[word] || state.words[word].status !== STATUS.UNVERIFIED) return;
+    state.currentWord = word;
+    saveState();
+    renderCurrentWord();
+    renderList();
+  });
 }
 
 async function init() {
+  bindEvents();
   try {
     const response = await fetch(SOURCE_PATH);
     if (!response.ok) {
@@ -566,22 +676,21 @@ async function init() {
     const markdown = await response.text();
 
     const parsed = parseMarkdownWordSections(markdown);
-    state.wordOrderIndex = buildWordOrderIndex(parsed);
-    state.words = createInitialWords(parsed);
-
     const persisted = getPersistedState();
-    if (persisted?.words) {
-      applyPersistedWords(state.words, persisted.words);
-      state.history = Array.isArray(persisted.history) ? persisted.history : [];
-    }
-
-    buildSectionsFromWords();
-    pickNextWord();
-    bindEvents();
+    bootstrapStateFromSections(parsed, persisted);
     saveState();
     render();
   } catch (error) {
-    els.currentWord.textContent = "初始化失败：请确认 ket-1975.md 可访问";
+    state.words = {};
+    state.sections = { unverified: [], known: [], unknown: [] };
+    state.currentWord = null;
+    render();
+    if (location.protocol === "file:") {
+      els.currentWord.textContent =
+        "无法直接读取本地 ket-1975.md（file:// 限制）。请点击“导入 md”选择词库文件，或用本地服务器启动。";
+    } else {
+      els.currentWord.textContent = "初始化失败：请确认 ket-1975.md 可访问";
+    }
     console.error(error);
   }
 }

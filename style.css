@@ -195,6 +195,21 @@ button.danger {
   word-break: break-word;
 }
 
+#word-list li.clickable {
+  cursor: pointer;
+}
+
+#word-list li.clickable:hover {
+  border-color: var(--primary);
+  background: #eef4ff;
+}
+
+#word-list li.current {
+  border-color: var(--primary);
+  background: #dbeafe;
+  color: #1e3a8a;
+}
+
 .lookup-dialog {
   width: min(560px, calc(100vw - 24px));
   border: 1px solid var(--border);
