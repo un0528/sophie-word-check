@@ -301,6 +301,13 @@ function createInitialWords(sections) {
     }
   }
 
+  sections.known.forEach((word, i) => {
+    if (words[word]) words[word].bucketOrder = i;
+  });
+  sections.unknown.forEach((word, i) => {
+    if (words[word]) words[word].bucketOrder = i;
+  });
+
   return words;
 }
 
@@ -321,10 +328,12 @@ function bootstrapStateFromSections(sections, persisted = null) {
   state.words = createInitialWords(sections);
   if (persisted?.words) {
     applyPersistedWords(state.words, persisted.words);
+    mergeWordsOnlyInPersisted(state.words, persisted.words, state.wordOrderIndex);
     state.history = Array.isArray(persisted.history) ? persisted.history : [];
   } else {
     state.history = [];
   }
+  normalizeBucketOrders(state.words, state.wordOrderIndex);
   buildSectionsFromWords();
   const persistedCurrentWord = persisted?.currentWord;
   if (
@@ -378,9 +387,20 @@ function buildSectionsFromWords() {
     return ai - bi;
   };
 
+  const byBucketOrder = (a, b) => {
+    const ae = state.words[a];
+    const be = state.words[b];
+    const ao = typeof ae?.bucketOrder === "number" ? ae.bucketOrder : Number.MAX_SAFE_INTEGER;
+    const bo = typeof be?.bucketOrder === "number" ? be.bucketOrder : Number.MAX_SAFE_INTEGER;
+    if (ao !== bo) return ao - bo;
+    const ai = state.wordOrderIndex[a] ?? Number.MAX_SAFE_INTEGER;
+    const bi = state.wordOrderIndex[b] ?? Number.MAX_SAFE_INTEGER;
+    return ai - bi;
+  };
+
   result.unverified.sort(bySourceOrder);
-  result.known.sort(bySourceOrder);
-  result.unknown.sort(bySourceOrder);
+  result.known.sort(byBucketOrder);
+  result.unknown.sort(byBucketOrder);
   state.sections = result;
 }
 
@@ -391,6 +411,77 @@ function applyPersistedWords(baseWords, persistedWords) {
     if (Object.values(STATUS).includes(persisted.status)) {
       baseWords[word].status = persisted.status;
       baseWords[word].updatedAt = persisted.updatedAt || null;
+      if (typeof persisted.bucketOrder === "number") {
+        baseWords[word].bucketOrder = persisted.bucketOrder;
+      } else if (persisted.status === STATUS.UNVERIFIED) {
+        delete baseWords[word].bucketOrder;
+      }
+    }
+  });
+}
+
+function maxBucketOrderIn(words, status) {
+  let m = -1;
+  for (const w of Object.keys(words)) {
+    const e = words[w];
+    if (e.status !== status) continue;
+    if (typeof e.bucketOrder === "number" && e.bucketOrder > m) m = e.bucketOrder;
+  }
+  return m;
+}
+
+/** Legacy saves without bucketOrder: fill so known/unknown order matches former source-order sort. */
+function normalizeBucketOrders(words, wordOrderIndex) {
+  for (const status of [STATUS.KNOWN, STATUS.UNKNOWN]) {
+    const group = Object.keys(words).filter((w) => words[w].status === status);
+    const missing = group.filter((w) => typeof words[w].bucketOrder !== "number");
+    if (missing.length === 0) continue;
+    missing.sort((a, b) => {
+      const ai = wordOrderIndex[a] ?? Number.MAX_SAFE_INTEGER;
+      const bi = wordOrderIndex[b] ?? Number.MAX_SAFE_INTEGER;
+      return ai - bi;
+    });
+    const maxExisting = Math.max(
+      -1,
+      ...group
+        .filter((w) => typeof words[w].bucketOrder === "number")
+        .map((w) => words[w].bucketOrder)
+    );
+    let next = maxExisting + 1;
+    missing.forEach((w) => {
+      words[w].bucketOrder = next++;
+    });
+  }
+}
+
+/** Words saved locally (e.g. after importing a larger md) may not appear in the fetched SOURCE_PATH file; merge them back so counts/progress match local data. */
+function mergeWordsOnlyInPersisted(baseWords, persistedWords, wordOrderIndex) {
+  if (!persistedWords || typeof persistedWords !== "object") return;
+  let maxOrder = 0;
+  for (const v of Object.values(wordOrderIndex)) {
+    if (typeof v === "number" && v > maxOrder) maxOrder = v;
+  }
+  Object.keys(persistedWords).forEach((word) => {
+    if (baseWords[word]) return;
+    const persisted = persistedWords[word];
+    if (!persisted || !persisted.status) return;
+    if (!Object.values(STATUS).includes(persisted.status)) return;
+    maxOrder += 1;
+    wordOrderIndex[word] = maxOrder;
+    const bucketOrder =
+      typeof persisted.bucketOrder === "number"
+        ? persisted.bucketOrder
+        : maxBucketOrderIn(baseWords, persisted.status) + 1;
+    baseWords[word] = {
+      status: persisted.status,
+      updatedAt: persisted.updatedAt || null,
+      bucketOrder:
+        persisted.status === STATUS.KNOWN || persisted.status === STATUS.UNKNOWN
+          ? bucketOrder
+          : undefined,
+    };
+    if (persisted.status === STATUS.UNVERIFIED) {
+      delete baseWords[word].bucketOrder;
     }
   });
 }
@@ -435,6 +526,13 @@ function setWordStatus(word, status) {
 
   current.status = status;
   current.updatedAt = new Date().toISOString();
+  if (status === STATUS.KNOWN || status === STATUS.UNKNOWN) {
+    const others = { ...state.words };
+    delete others[word];
+    current.bucketOrder = maxBucketOrderIn(others, status) + 1;
+  } else {
+    delete current.bucketOrder;
+  }
   buildSectionsFromWords();
   pickNextWord(word);
   saveState();
@@ -447,6 +545,7 @@ function undoLastAction() {
   if (!state.words[last.word]) return;
   state.words[last.word].status = last.from;
   state.words[last.word].updatedAt = new Date().toISOString();
+  delete state.words[last.word].bucketOrder;
   buildSectionsFromWords();
   if (!state.currentWord) {
     state.currentWord = last.word;
@@ -580,20 +679,23 @@ function importMarkdownProgress(markdownText) {
 
   Object.keys(state.words).forEach((word) => {
     state.words[word].status = STATUS.UNVERIFIED;
+    delete state.words[word].bucketOrder;
     state.words[word].updatedAt = new Date().toISOString();
   });
 
-  const applyStatus = (words, status) => {
-    words.forEach((word) => {
-      if (!state.words[word]) return;
-      state.words[word].status = status;
-      state.words[word].updatedAt = new Date().toISOString();
-    });
-  };
+  importedSections.known.forEach((word, i) => {
+    if (!state.words[word]) return;
+    state.words[word].status = STATUS.KNOWN;
+    state.words[word].bucketOrder = i;
+    state.words[word].updatedAt = new Date().toISOString();
+  });
 
-  applyStatus(importedSections.unverified, STATUS.UNVERIFIED);
-  applyStatus(importedSections.known, STATUS.KNOWN);
-  applyStatus(importedSections.unknown, STATUS.UNKNOWN);
+  importedSections.unknown.forEach((word, i) => {
+    if (!state.words[word]) return;
+    state.words[word].status = STATUS.UNKNOWN;
+    state.words[word].bucketOrder = i;
+    state.words[word].updatedAt = new Date().toISOString();
+  });
 
   buildSectionsFromWords();
   pickNextWord();
